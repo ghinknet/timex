@@ -1,0 +1,105 @@
+name: Refresh gosumdb on release
+
+on:
+  release:
+    types: [published]
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+      - '*'
+
+jobs:
+  ci:
+    runs-on: node-24-alpine
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install deps (apk)
+        shell: sh
+        run: |
+          set -e
+          sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.aliyun.com/alpine#g' /etc/apk/repositories
+          apk update
+          apk add --no-cache git ca-certificates curl tar xz
+
+      - name: Get Go version from go.mod
+        id: get_go_version
+        shell: sh
+        run: |
+          set -e
+          v=$(awk '/^go /{print $2; exit}' go.mod || true)
+          if [ -z "$v" ]; then
+            v=1.22
+          fi
+          vt="$v"
+          case "$vt" in
+            *.*.*) ;;
+            *.*) vt="$vt.0" ;;
+          esac
+          echo "go-version=$v" >> $GITHUB_OUTPUT
+          echo "go-version-tarball=$vt" >> $GITHUB_OUTPUT
+
+      - name: Install Go (tarball)
+        shell: sh
+        run: |
+          set -eux
+          v="${{ steps.get_go_version.outputs.go-version-tarball }}"
+          arch=$(uname -m)
+          case "$arch" in
+            x86_64|amd64) goarch="amd64" ;;
+            aarch64|arm64) goarch="arm64" ;;
+            *) goarch="amd64" ;;
+          esac
+          url="https://mirrors.aliyun.com/golang/go${v}.linux-${goarch}.tar.gz"
+          curl -fsSL -o /tmp/go.tgz "$url"
+          rm -rf /usr/local/go || true
+          tar -C /usr/local -xzf /tmp/go.tgz
+          echo "PATH=/usr/local/go/bin:$PATH" >> $GITHUB_ENV
+          export PATH=/usr/local/go/bin:$PATH
+          go version
+
+      - name: Fetch tags
+        shell: sh
+        run: |
+          git fetch --tags --prune --force origin || true
+
+      - name: Run go tests (branch/tag/release)
+        if: "startsWith(github.ref, 'refs/heads/') || startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'"
+        shell: sh
+        run: |
+          set -eux
+          env GOPROXY=https://goproxy.cn,direct go test ./... -v
+
+      - name: Refresh gosumdb (tag/release only)
+        if: "startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'"
+        shell: sh
+        run: |
+          set -eux
+          module=$(awk '/^module /{print $2; exit}' go.mod)
+          tag=""
+          if [ -n "${GITHUB_REF:-}" ]; then
+            tag=${GITHUB_REF#refs/tags/}
+          fi
+          tag=${tag:-${GITEA_RELEASE_TAG:-${EVENT_RELEASE_TAG:-}}}
+          if [ -z "$tag" ]; then
+            tag=$(git describe --tags --exact-match 2>/dev/null || true)
+          fi
+          if [ -z "$tag" ]; then
+            tag=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          fi
+          if [ -z "$tag" ]; then
+            echo "No tag found for this run — nothing to refresh. Exiting."
+            exit 0
+          fi
+          TMPDIR=$(mktemp -d)
+          cd "$TMPDIR"
+          printf '%s\n' 'module refresh-gosumdb-temp' '' "go ${{ steps.get_go_version.outputs.go-version }}" > go.mod
+          env GOSUMDB=sum.golang.org GOPROXY=https://goproxy.cn,direct GOFLAGS='' go get "$module@$tag"
+          cd - >/dev/null || true
+          rm -rf "$TMPDIR"
