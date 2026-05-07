@@ -203,20 +203,16 @@ func (t Time) AddDateEOM(years, months, days int) Time {
 	lastOfMonth := time.Date(y, m+1, 0, 0, 0, 0, 0, loc).Day()
 	isEndOfMonth := d == lastOfMonth
 
-	tentative := t.std.AddDate(years, months, 0)
+	// Compute target month/year without day overflow.
+	target := time.Date(y+years, m+time.Month(months), 1, hour, minute, sec, nsec, loc)
+	lastOfTarget := time.Date(target.Year(), target.Month()+1, 0, 0, 0, 0, 0, loc).Day()
 
-	_, _, newD := tentative.Date()
-	needAdjust := isEndOfMonth || newD != d
-
-	var base time.Time
-	if needAdjust {
-		newY, newM, _ := tentative.Date()
-		base = time.Date(newY, newM+1, 0, hour, minute, sec, nsec, loc)
-	} else {
-		newY, newM, _ := tentative.Date()
-		base = time.Date(newY, newM, d, hour, minute, sec, nsec, loc)
+	day := d
+	if isEndOfMonth || d > lastOfTarget {
+		day = lastOfTarget
 	}
 
+	base := time.Date(target.Year(), target.Month(), day, hour, minute, sec, nsec, loc)
 	if days != 0 {
 		base = base.AddDate(0, 0, days)
 	}
