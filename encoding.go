@@ -1,8 +1,10 @@
 package timex
 
 import (
+	"database/sql/driver"
 	"encoding"
 	"encoding/binary"
+	"fmt"
 	"strings"
 	"time"
 
@@ -316,4 +318,83 @@ func (i *Interval) UnmarshalBinary(data []byte) error {
 		endIncluded:   flags&2 != 0,
 	}
 	return nil
+}
+
+// timex types implement database/sql/driver.Valuer and database/sql.Scanner,
+// round-tripping through their text form, so they work as column values with
+// database/sql and ORMs built on it (xorm, gorm, sqlx, ...) without an
+// app-level adapter. A text/varchar column preserves everything — infinite
+// bounds and interval inclusivity included. Scan accepts the string or []byte a
+// driver yields for a text column and maps SQL NULL to the zero value.
+//
+// The Scanner side is asserted against an inline interface so importing timex
+// does not pull all of database/sql into binaries that never touch a database;
+// only the lightweight database/sql/driver package is required (for Value).
+var (
+	_ driver.Valuer                = Time{}
+	_ driver.Valuer                = Duration{}
+	_ driver.Valuer                = Interval{}
+	_ interface{ Scan(any) error } = (*Time)(nil)
+	_ interface{ Scan(any) error } = (*Duration)(nil)
+	_ interface{ Scan(any) error } = (*Interval)(nil)
+)
+
+// textValue is the shared driver.Valuer body: marshal to the canonical text form
+// and hand the driver a string, i.e. a text/varchar column value.
+func textValue(m encoding.TextMarshaler) (driver.Value, error) {
+	b, err := m.MarshalText()
+	if err != nil {
+		return nil, err
+	}
+	return string(b), nil
+}
+
+// scanText is the shared sql.Scanner body for a non-NULL src: it forwards the
+// string / []byte a driver returns for a text column to u.UnmarshalText. NULL is
+// handled by each Scan method (reset to the zero value) before calling this.
+func scanText(u encoding.TextUnmarshaler, src any) error {
+	switch v := src.(type) {
+	case string:
+		return u.UnmarshalText([]byte(v))
+	case []byte:
+		return u.UnmarshalText(v)
+	default:
+		return fmt.Errorf("timex: cannot scan %T into %T", src, u)
+	}
+}
+
+// Value implements database/sql/driver.Valuer.
+func (t Time) Value() (driver.Value, error) { return textValue(t) }
+
+// Scan implements database/sql.Scanner. A NULL column yields the zero Time.
+func (t *Time) Scan(src any) error {
+	if src == nil {
+		*t = Time{}
+		return nil
+	}
+	return scanText(t, src)
+}
+
+// Value implements database/sql/driver.Valuer.
+func (d Duration) Value() (driver.Value, error) { return textValue(d) }
+
+// Scan implements database/sql.Scanner. A NULL column yields the zero Duration.
+func (d *Duration) Scan(src any) error {
+	if src == nil {
+		*d = Duration{}
+		return nil
+	}
+	return scanText(d, src)
+}
+
+// Value implements database/sql/driver.Valuer.
+func (i Interval) Value() (driver.Value, error) { return textValue(i) }
+
+// Scan implements database/sql.Scanner. A NULL column yields the zero Interval.
+func (i *Interval) Scan(src any) error {
+	if src == nil {
+		*i = Interval{}
+		return nil
+	}
+	return scanText(i, src)
 }

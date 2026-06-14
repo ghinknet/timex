@@ -3,7 +3,30 @@ package timex
 import (
 	"math"
 	"testing"
+	"time"
 )
+
+func TestDurationIsZero(t *testing.T) {
+	cases := []struct {
+		name string
+		in   Duration
+		want bool
+	}{
+		{"zero-value", Duration{}, true},
+		{"explicit-zero", FromStdDuration(0), true},
+		{"nonzero", FromStdDuration(time.Nanosecond), false},
+		{"pos-inf", NewPosInfDuration(), false},
+		{"neg-inf", NewNegInfDuration(), false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.in.IsZero(); got != tc.want {
+				t.Fatalf("IsZero got %v want %v", got, tc.want)
+			}
+		})
+	}
+}
 
 func TestDurationInfiniteUnits(t *testing.T) {
 	cases := []struct {
@@ -145,4 +168,3 @@ func TestDurationInfiniteUnits(t *testing.T) {
 		})
 	}
 }
-

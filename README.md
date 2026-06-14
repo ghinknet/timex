@@ -20,9 +20,10 @@ import "go.gh.ink/timex"
 - **Intervals** — model `[start, end]`, `(start, end)`, `[start, end)` ranges with
   inclusive/exclusive bounds and containment checks.
 - **Serialization** — all types implement `encoding.TextMarshaler` /
-  `TextUnmarshaler` (JSON, XML, TOML, map keys) and `encoding.BinaryMarshaler` /
-  `BinaryUnmarshaler` (gob and other binary codecs), so they round-trip with no
-  format-specific code.
+  `TextUnmarshaler` (JSON, XML, TOML, map keys), `encoding.BinaryMarshaler` /
+  `BinaryUnmarshaler` (gob and other binary codecs), and `database/sql/driver.Valuer`
+  / `database/sql.Scanner` (SQL columns, via `database/sql` and ORMs), so they
+  round-trip with no format-specific code.
 - **Drop-in feel** — method names and signatures mirror the standard `time`
   package, with an extra `InfFlag` return value where infinity matters.
 
@@ -309,6 +310,29 @@ _ = gob.NewDecoder(&buf).Decode(&back)
 The binary form is compact (each value is prefixed by its `InfFlag` byte, so an
 infinite `Time`/`Duration` is a single byte) and is meant for machine exchange,
 not human inspection — use the text form for JSON and friends.
+
+For databases, the same types implement `database/sql/driver.Valuer` and
+`database/sql.Scanner`, persisting through their text form. They can be used
+directly as column values with `database/sql` and ORMs built on it (xorm, gorm,
+sqlx, …) — no per-app adapter type needed:
+
+```go
+type Schedule struct {
+	Window timex.Interval
+	Every  timex.Duration
+	Until  timex.Time
+}
+// Window/Every/Until map to text/varchar columns; Insert/Update/Select just work.
+```
+
+Store the columns as `text`/`varchar`: that representation is portable across
+drivers and lossless, preserving infinite bounds and interval inclusivity that
+no native SQL type captures. A SQL `NULL` scans back to the zero value (use a
+pointer field or an `sql.Null…` wrapper if you must distinguish `NULL`).
+
+All three types also report `IsZero()` and have a `String()` form, so they read
+naturally in logs and satisfy reflection-based zero-checks (e.g. ORM helpers
+deciding whether to write a column).
 
 ### Sleeping
 

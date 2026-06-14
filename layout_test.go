@@ -60,18 +60,18 @@ func TestLayoutCommonFormats(t *testing.T) {
 
 func TestLayoutCommonParses(t *testing.T) {
 	cases := []struct {
-		name     string
-		layout   string
-		value    string
-		year     int
-		month    int
-		day      int
-		hour     int
-		minute   int
-		second   int
-		nsec     int
-		zoneOff  int
-		hasZone  bool
+		name    string
+		layout  string
+		value   string
+		year    int
+		month   int
+		day     int
+		hour    int
+		minute  int
+		second  int
+		nsec    int
+		zoneOff int
+		hasZone bool
 	}{
 		{
 			name:   "date-slash",

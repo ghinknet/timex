@@ -347,6 +347,140 @@ func TestGobRoundTrip(t *testing.T) {
 	}
 }
 
+func TestTimeValueScan(t *testing.T) {
+	cases := []struct {
+		name string
+		in   Time
+	}{
+		{"finite", encStart},
+		{"pos-inf", NewPosInfTime()},
+		{"neg-inf", NewNegInfTime()},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v, err := tc.in.Value()
+			if err != nil {
+				t.Fatalf("Value err %v", err)
+			}
+			s, ok := v.(string)
+			if !ok {
+				t.Fatalf("Value type = %T, want string", v)
+			}
+			// Drivers hand a text column back as string or []byte; both must scan.
+			var fromStr, fromBytes Time
+			if err := fromStr.Scan(s); err != nil {
+				t.Fatalf("Scan(string) err %v", err)
+			}
+			if err := fromBytes.Scan([]byte(s)); err != nil {
+				t.Fatalf("Scan([]byte) err %v", err)
+			}
+			if !fromStr.Equal(tc.in) || fromStr.inf != tc.in.inf {
+				t.Fatalf("Scan(string) got %v want %v", fromStr, tc.in)
+			}
+			if !fromBytes.Equal(tc.in) || fromBytes.inf != tc.in.inf {
+				t.Fatalf("Scan([]byte) got %v want %v", fromBytes, tc.in)
+			}
+		})
+	}
+}
+
+func TestDurationValueScan(t *testing.T) {
+	cases := []struct {
+		name string
+		in   Duration
+	}{
+		{"finite", FromStdDuration(90 * time.Minute)},
+		{"pos-inf", NewPosInfDuration()},
+		{"neg-inf", NewNegInfDuration()},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v, err := tc.in.Value()
+			if err != nil {
+				t.Fatalf("Value err %v", err)
+			}
+			s, ok := v.(string)
+			if !ok {
+				t.Fatalf("Value type = %T, want string", v)
+			}
+			var fromStr, fromBytes Duration
+			if err := fromStr.Scan(s); err != nil {
+				t.Fatalf("Scan(string) err %v", err)
+			}
+			if err := fromBytes.Scan([]byte(s)); err != nil {
+				t.Fatalf("Scan([]byte) err %v", err)
+			}
+			if fromStr.std != tc.in.std || fromStr.inf != tc.in.inf {
+				t.Fatalf("Scan(string) got %v,%v want %v,%v", fromStr.std, fromStr.inf, tc.in.std, tc.in.inf)
+			}
+			if fromBytes.std != tc.in.std || fromBytes.inf != tc.in.inf {
+				t.Fatalf("Scan([]byte) got %v,%v want %v,%v", fromBytes.std, fromBytes.inf, tc.in.std, tc.in.inf)
+			}
+		})
+	}
+}
+
+func TestIntervalValueScan(t *testing.T) {
+	cases := []struct {
+		name string
+		in   Interval
+	}{
+		{"closed-open", NewInterval(encStart, encEnd, true, false)},
+		{"open-to-pos-inf", NewInterval(encStart, NewPosInfTime(), false, false)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v, err := tc.in.Value()
+			if err != nil {
+				t.Fatalf("Value err %v", err)
+			}
+			s, ok := v.(string)
+			if !ok {
+				t.Fatalf("Value type = %T, want string", v)
+			}
+			var fromStr, fromBytes Interval
+			if err := fromStr.Scan(s); err != nil {
+				t.Fatalf("Scan(string) err %v", err)
+			}
+			if err := fromBytes.Scan([]byte(s)); err != nil {
+				t.Fatalf("Scan([]byte) err %v", err)
+			}
+			assertIntervalEqual(t, fromStr, tc.in)
+			assertIntervalEqual(t, fromBytes, tc.in)
+		})
+	}
+}
+
+// TestScanNullAndInvalid checks the two edge cases every Scanner must get right:
+// SQL NULL resets to the zero value, and an unsupported source type errors
+// instead of panicking.
+func TestScanNullAndInvalid(t *testing.T) {
+	ti := encStart
+	if err := ti.Scan(nil); err != nil || !ti.IsZero() {
+		t.Fatalf("Time.Scan(nil): err=%v isZero=%v", err, ti.IsZero())
+	}
+	d := FromStdDuration(time.Hour)
+	if err := d.Scan(nil); err != nil || !d.IsZero() {
+		t.Fatalf("Duration.Scan(nil): err=%v isZero=%v", err, d.IsZero())
+	}
+	iv := NewInterval(encStart, encEnd, true, true)
+	if err := iv.Scan(nil); err != nil || !iv.IsZero() {
+		t.Fatalf("Interval.Scan(nil): err=%v isZero=%v", err, iv.IsZero())
+	}
+
+	var t2 Time
+	if err := t2.Scan(12345); err == nil {
+		t.Fatal("Time.Scan(int): expected error")
+	}
+	var iv2 Interval
+	if err := iv2.Scan(3.14); err == nil {
+		t.Fatal("Interval.Scan(float): expected error")
+	}
+}
+
 func assertIntervalEqual(t *testing.T, got, want Interval) {
 	t.Helper()
 	gs, gsi := got.Start()

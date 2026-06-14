@@ -38,6 +38,13 @@ func NewNegInfDuration() Duration {
 	}
 }
 
+// IsZero reports whether the duration is the zero value: a finite, zero-length
+// duration. Like Time.IsZero and Interval.IsZero, it lets reflection-based
+// zero-checkers (e.g. ORM helpers) treat Duration as an opaque value.
+func (d Duration) IsZero() bool {
+	return d.std == 0 && d.inf == FiniteTime
+}
+
 func (d Duration) Hours() (hours float64, inf InfFlag) {
 	if d.inf != FiniteTime {
 		return expr.Ternary(
