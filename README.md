@@ -19,6 +19,10 @@ import "go.gh.ink/timex"
   `yyyy-MM-dd HH:mm:ss` in addition to Go's reference-time layouts.
 - **Intervals** — model `[start, end]`, `(start, end)`, `[start, end)` ranges with
   inclusive/exclusive bounds and containment checks.
+- **Serialization** — all types implement `encoding.TextMarshaler` /
+  `TextUnmarshaler` (JSON, XML, TOML, map keys) and `encoding.BinaryMarshaler` /
+  `BinaryUnmarshaler` (gob and other binary codecs), so they round-trip with no
+  format-specific code.
 - **Drop-in feel** — method names and signatures mirror the standard `time`
   package, with an extra `InfFlag` return value where infinity matters.
 
@@ -242,6 +246,70 @@ e, eIncluded := iv.End()
 Combined with infinite times, intervals can model open-ended ranges such as
 `[start, +∞)`.
 
+### Serialization
+
+`Time`, `Duration` and `Interval` implement `encoding.TextMarshaler` /
+`encoding.TextUnmarshaler`. A single text form is therefore reused automatically
+by `encoding/json`, `encoding/xml` and TOML — for both values and map keys — so
+no format-specific code is needed. (YAML's `gopkg.in/yaml.v3` only consults its
+own `Marshaler` interface, so add a small `MarshalYAML`/`UnmarshalYAML` adapter
+there if you need it.)
+
+```go
+type Schedule struct {
+	Name   string         `json:"name"`
+	Window timex.Interval `json:"window"`
+	Every  timex.Duration `json:"every"`
+	Until  timex.Time     `json:"until"`
+}
+
+s := Schedule{
+	Name:   "Q1",
+	Window: timex.NewInterval(start, end, true, false),
+	Every:  timex.FromStdDuration(24 * time.Hour),
+	Until:  timex.NewPosInfTime(),
+}
+
+data, _ := json.Marshal(s)
+// {
+//   "name":   "Q1",
+//   "window": "[2024-01-01T00:00:00Z,2024-04-01T00:00:00Z)",
+//   "every":  "24h0m0s",
+//   "until":  "positive infinite"
+// }
+
+var back Schedule
+_ = json.Unmarshal(data, &back) // round-trips exactly
+```
+
+Text forms:
+
+| Type       | Finite                                  | Infinite                                   |
+|------------|-----------------------------------------|--------------------------------------------|
+| `Time`     | RFC 3339, e.g. `2024-01-02T15:04:05Z`   | `positive infinite` / `negative infinite`  |
+| `Duration` | Go duration, e.g. `24h0m0s`             | `positive infinite` / `negative infinite`  |
+| `Interval` | `[start,end)` notation (see below)      | endpoints use the `Time` forms above       |
+
+Interval brackets encode the bounds: `[`/`]` is inclusive, `(`/`)` is exclusive
+— e.g. `[a,b]` closed, `(a,b)` open, `[a,b)` left-closed/right-open. Whitespace
+around endpoints is tolerated when decoding. Open-ended ranges serialize
+naturally, e.g. `[2024-01-01T00:00:00Z,positive infinite)`.
+
+For binary protocols, the same types implement `encoding.BinaryMarshaler` /
+`encoding.BinaryUnmarshaler`, which `encoding/gob` uses automatically — no type
+registration required:
+
+```go
+var buf bytes.Buffer
+_ = gob.NewEncoder(&buf).Encode(s) // s is the Schedule above
+var back Schedule
+_ = gob.NewDecoder(&buf).Decode(&back)
+```
+
+The binary form is compact (each value is prefixed by its `InfFlag` byte, so an
+infinite `Time`/`Duration` is a single byte) and is meant for machine exchange,
+not human inspection — use the text form for JSON and friends.
+
 ### Sleeping
 
 ```go
@@ -255,6 +323,8 @@ timex.Sleep(timex.NewPosInfDuration())          // blocks forever
 | Error                   | When it occurs                                              |
 |-------------------------|------------------------------------------------------------|
 | `ErrInvalidInfiniteOp`  | Adding `±∞` to `∓∞`, or rounding/truncating with infinite bounds |
+| `ErrInvalidInterval`    | Decoding an interval from text that is not valid `[start,end)` notation |
+| `ErrInvalidBinary`      | Decoding a value from malformed or truncated binary data    |
 
 ## Testing
 
